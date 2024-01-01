@@ -1,0 +1,172 @@
+---
+title: "LinkedIn Predictor App in R"
+author: "Justin Brooks"
+date: "2023-12-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(corrplot)
+
+```
+
+```{r}
+s<- read.csv('social_media_usage.csv')
+```
+
+
+```{r}
+clean_sm <- function(x) {
+  ifelse(x == 1, 1, 0)
+}
+
+```
+
+
+```{r}
+s$sm_li <- clean_sm(s$web1h)
+
+# Transform the variables for prediction.
+ss <- s %>%
+  mutate(
+    income = ifelse(income > 9, NA, income),
+    education = ifelse(educ2 > 8, NA, educ2),
+    parent = ifelse(par == 1, 1, 0),
+    married = ifelse(marital == 1, 1, 0),
+    female = ifelse(gender == 2, 1, 0),
+    age = ifelse(age > 98, NA, age),
+    sm_li = ifelse(sm_li == 1, 1, 0)
+  ) %>%
+  select(sm_li, income, education, parent, married, female, age) %>%
+  drop_na()
+```
+
+
+```{r}
+print(dim(ss))
+print(head(ss))
+```
+
+
+```{r}
+# Prep data for correlation plot
+continuous_vars <- ss %>% select_if(is.numeric)
+correlations <- cor(continuous_vars)
+ss_correlations <- correlations['sm_li',]
+ss_correlations_df <- data.frame(Variable = names(ss_correlations), 
+                                        Correlation = ss_correlations) %>%
+  arrange(desc(Correlation))
+
+# Remove columns with zero variance or too many NAs
+ss_filtered_continuous_vars <- continuous_vars %>% 
+  select_if(function(x) var(x, na.rm = TRUE) > 0 & mean(is.na(x)) < 0.5)
+
+# Recalculate correlations
+ss_fixed_correlations <- cor(ss_filtered_continuous_vars, use = "complete.obs")
+
+# Replace NA with 0 in correlation matrix
+ss_fixed_correlations[is.na(ss_fixed_correlations)] <- 0
+
+# Plotting correlations among continuous variables-Heatmap
+corrplot(ss_fixed_correlations, method = "color", order = "hclust", addCoef.col = "black", tl.cex = 0.75, tl.srt = 45, type= 'lower',number.cex= 0.60)
+
+```
+
+
+```{r}
+y <- ss$sm_li
+X <- ss %>% select(age, education, income, parent, married, female)
+```
+
+
+```{r}
+set.seed(3125)
+trainIndex <- createDataPartition(y, p = .8, list = FALSE, times = 1)
+X_train <- X[trainIndex, ]
+X_test <- X[-trainIndex, ]
+y_train <- y[trainIndex]
+y_test <- y[-trainIndex]
+```
+
+
+```{r}
+model <- glm(sm_li ~ ., family = binomial, data = ss[trainIndex, ])
+summary(model)
+```
+
+
+```{r}
+y_pred <- predict(model, newdata = X_test, type = "response")
+y_pred_class <- ifelse(y_pred > 0.5, 1, 0)
+confusionMatrix <- table(y_test, y_pred_class)
+print(confusionMatrix)
+
+# Calculating accuracy
+accuracy <- sum(diag(confusionMatrix)) / sum(confusionMatrix)
+print(paste('Accuracy:', accuracy))
+```
+
+
+```{r}
+y_test <- factor(y_test, levels = c(0, 1))
+y_pred_class <- factor(y_pred_class, levels = c(0, 1))
+
+# Creating the confusion matrix
+confusionMatrix <- table(y_test, y_pred_class)
+
+# Now create the dataframe from the confusion matrix with names
+confusionMatrix_df <- as.data.frame.matrix(confusionMatrix)
+rownames(confusionMatrix_df) <- c("Actual negative", "Actual positive")
+colnames(confusionMatrix_df) <- c("Predicted negative", "Predicted positive")
+
+# Print the confusion matrix dataframe
+print(confusionMatrix_df)
+
+```
+
+
+```{r}
+precision <- confusionMatrix[2,2] / sum(confusionMatrix[2,])
+recall <- confusionMatrix[2,2] / sum(confusionMatrix[,2])
+f1 <- 2 * (precision * recall) / (precision + recall)
+
+print(paste('Precision:', precision))
+print(paste('Recall:', recall))
+print(paste('F1 Score:', f1))
+```
+
+
+```{r}
+newdata <- data.frame(
+  age = c(42, 82),
+  education = c(7, 7),
+  income = c(8, 8),
+  parent = c(0, 0),
+  married = c(1, 1),
+  female = c(1, 1)
+)
+```
+
+
+```{r}
+newdata$prediction_linkedin_user <- predict(model, newdata=newdata, type="response")
+
+newdata
+```
+
+
+```{r}
+newdata$prediction_linkedin_user <- ifelse(newdata$prediction_linkedin_user >= 0.5, 1, 0)
+
+
+print(newdata)
+
+```
+
+
